@@ -1,0 +1,84 @@
+services:
+  moris:
+    build: .
+    container_name: moris
+    restart: unless-stopped
+    env_file: [.env]
+    ports: ["8080:8080"]
+    volumes:
+      - ./downloads:/app/downloads
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      telegram-bot-api: {condition: service_started}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  telegram-bot-api:
+    build:
+      context: ./docker/telegram-bot-api
+    container_name: moris-telegram-api
+    restart: unless-stopped
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
+      TELEGRAM_LOCAL: ${TELEGRAM_LOCAL:-true}
+      TELEGRAM_HTTP_PORT: 8081
+      TELEGRAM_WORK_DIR: /var/lib/telegram-bot-api
+      TELEGRAM_TEMP_DIR: /tmp/telegram-bot-api
+    volumes:
+      - telegram_bot_data:/var/lib/telegram-bot-api
+      - telegram_bot_tmp:/tmp/telegram-bot-api
+    expose: ["8081"]
+  caddy:
+    image: caddy:2-alpine
+    container_name: moris-caddy
+    restart: unless-stopped
+    environment:
+      CADDY_DOMAIN: ${CADDY_DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      moris:
+        condition: service_started
+  postgres:
+    image: postgres:16-alpine
+    container_name: moris-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: moris
+      POSTGRES_USER: moris
+      POSTGRES_PASSWORD: moris
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moris -d moris"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    container_name: moris-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redis_data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  postgres_data:
+  redis_data:
+  telegram_bot_data:
+  telegram_bot_tmp:
+  caddy_data:
+  caddy_config:
